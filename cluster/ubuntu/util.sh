@@ -423,21 +423,22 @@ function provision-master() {
   check-tmp-noexec
 
   ssh $SSH_OPTS "$MASTER" "mkdir -p ~/kube/default"
+  CLUSTER_ROOT=${KUBE_ROOT}/cluster/
 
   # copy the binaries and scripts to the ~/kube directory on the master
   scp -r $SSH_OPTS \
-    saltbase/salt/generate-cert/make-ca-cert.sh \
+    ${CLUSTER_ROOT}/saltbase/salt/generate-cert/make-ca-cert.sh \
     easy-rsa.tar.gz \
-    ubuntu/reconfDocker.sh \
+    ${CLUSTER_ROOT}/ubuntu/reconfDocker.sh \
     "${KUBE_CONFIG_FILE}" \
-    ubuntu/util.sh \
-    ubuntu/master/* \
-    ubuntu/binaries/master/ \
+    ${CLUSTER_ROOT}/ubuntu/util.sh \
+    ${CLUSTER_ROOT}/ubuntu/master/* \
+    ${CLUSTER_ROOT}/ubuntu/binaries/master/ \
     "${MASTER}:~/kube"
 
   if [ -z "$CNI_PLUGIN_CONF" ] || [ -z "$CNI_PLUGIN_EXES" ]; then
     # Flannel is being used: copy the flannel binaries and scripts, set reconf flag
-    scp -r $SSH_OPTS ubuntu/master-flannel/* "${MASTER}:~/kube"
+    scp -r $SSH_OPTS ${CLUSTER_ROOT}/ubuntu/master-flannel/* "${MASTER}:~/kube"
     NEED_RECONFIG_DOCKER=true
   else
     # CNI is being used: set reconf flag
@@ -477,6 +478,7 @@ function provision-master() {
     create-kube-scheduler-opts
     create-flanneld-opts '127.0.0.1' '${MASTER_IP}'
     FLANNEL_OTHER_NET_CONFIG='${FLANNEL_OTHER_NET_CONFIG}' sudo -E -p '[sudo] password to start master: ' -- /bin/bash -ce '
+
       ${BASH_DEBUG_FLAGS}
 
       cp ~/kube/default/* /etc/default/
@@ -501,18 +503,20 @@ function provision-node() {
 
   ssh $SSH_OPTS $1 "mkdir -p ~/kube/default"
 
+  CLUSTER_ROOT=${KUBE_ROOT}/cluster/
+
   # copy the binaries and scripts to the ~/kube directory on the node
   scp -r $SSH_OPTS \
     "${KUBE_CONFIG_FILE}" \
-    ubuntu/util.sh \
-    ubuntu/reconfDocker.sh \
-    ubuntu/minion/* \
-    ubuntu/binaries/minion \
+    ${CLUSTER_ROOT}/ubuntu/util.sh \
+    ${CLUSTER_ROOT}/ubuntu/reconfDocker.sh \
+    ${CLUSTER_ROOT}/ubuntu/minion/* \
+    ${CLUSTER_ROOT}/ubuntu/binaries/minion \
     "${1}:~/kube"
 
   if [ -z "$CNI_PLUGIN_CONF" ] || [ -z "$CNI_PLUGIN_EXES" ]; then
     # Prep for Flannel use: copy the flannel binaries and scripts, set reconf flag
-    scp -r $SSH_OPTS ubuntu/minion-flannel/* "${1}:~/kube"
+    scp -r $SSH_OPTS ${CLUSTER_ROOT}/ubuntu/minion-flannel/* "${1}:~/kube"
     SERVICE_STARTS="service flanneld start"
     NEED_RECONFIG_DOCKER=true
     CNI_PLUGIN_CONF=''
@@ -534,7 +538,7 @@ function provision-node() {
                     service kube-proxy start'
     NEED_RECONFIG_DOCKER=false
   fi
-  
+
   BASH_DEBUG_FLAGS=""
   if [[ "$DEBUG" == "true" ]] ; then
     BASH_DEBUG_FLAGS="set -x"
@@ -560,7 +564,7 @@ function provision-node() {
       '${KUBE_PROXY_EXTRA_OPTS}'
     create-flanneld-opts '${MASTER_IP}' '${1#*@}'
 
-    sudo -E -p '[sudo] password to start node: ' -- /bin/bash -ce '    
+    sudo -E -p '[sudo] password to start node: ' -- /bin/bash -ce '
       ${BASH_DEBUG_FLAGS}
       cp ~/kube/default/* /etc/default/
       cp ~/kube/init_conf/* /etc/init/
@@ -581,23 +585,25 @@ function provision-masterandnode() {
 
   ssh $SSH_OPTS $MASTER "mkdir -p ~/kube/default"
 
+  CLUSTER_ROOT=${KUBE_ROOT}/cluster/
+
   # copy the binaries and scripts to the ~/kube directory on the master
   # scp order matters
   scp -r $SSH_OPTS \
-    saltbase/salt/generate-cert/make-ca-cert.sh \
+    ${CLUSTER_ROOT}/saltbase/salt/generate-cert/make-ca-cert.sh \
     easy-rsa.tar.gz \
     "${KUBE_CONFIG_FILE}" \
-    ubuntu/util.sh \
-    ubuntu/minion/* \
-    ubuntu/master/* \
-    ubuntu/reconfDocker.sh \
-    ubuntu/binaries/master/ \
-    ubuntu/binaries/minion \
+    ${CLUSTER_ROOT}/ubuntu/util.sh \
+    ${CLUSTER_ROOT}/ubuntu/minion/* \
+    ${CLUSTER_ROOT}/ubuntu/master/* \
+    ${CLUSTER_ROOT}/ubuntu/reconfDocker.sh \
+    ${CLUSTER_ROOT}/ubuntu/binaries/master/ \
+    ${CLUSTER_ROOT}/ubuntu/binaries/minion \
     "${MASTER}:~/kube"
 
   if [ -z "$CNI_PLUGIN_CONF" ] || [ -z "$CNI_PLUGIN_EXES" ]; then
     # Prep for Flannel use: copy the flannel binaries and scripts, set reconf flag
-    scp -r $SSH_OPTS ubuntu/minion-flannel/* ubuntu/master-flannel/* "${MASTER}:~/kube"
+    scp -r $SSH_OPTS ${CLUSTER_ROOT}/ubuntu/minion-flannel/* ${CLUSTER_ROOT}/ubuntu/master-flannel/* "${MASTER}:~/kube"
     NEED_RECONFIG_DOCKER=true
     CNI_PLUGIN_CONF=''
 
@@ -615,7 +621,7 @@ function provision-masterandnode() {
         "'
     NEED_RECONFIG_DOCKER=false
   fi
-  
+
   EXTRA_SANS=(
     IP:${MASTER_IP}
     IP:${SERVICE_CLUSTER_IP_RANGE%.*}.1
@@ -660,7 +666,7 @@ function provision-masterandnode() {
       '${KUBE_PROXY_EXTRA_OPTS}'
     create-flanneld-opts '127.0.0.1' '${MASTER_IP}'
 
-    FLANNEL_OTHER_NET_CONFIG='${FLANNEL_OTHER_NET_CONFIG}' sudo -E -p '[sudo] password to start master: ' -- /bin/bash -ce ' 
+    FLANNEL_OTHER_NET_CONFIG='${FLANNEL_OTHER_NET_CONFIG}' sudo -E -p '[sudo] password to start master: ' -- /bin/bash -ce '
       ${BASH_DEBUG_FLAGS}
       cp ~/kube/default/* /etc/default/
       cp ~/kube/init_conf/* /etc/init/
@@ -697,7 +703,7 @@ function check-pods-torn-down() {
 # Delete a kubernetes cluster
 function kube-down() {
   export KUBECTL_PATH="${KUBE_ROOT}/cluster/ubuntu/binaries/kubectl"
-  
+
   export KUBE_CONFIG_FILE=${KUBE_CONFIG_FILE:-${KUBE_ROOT}/cluster/ubuntu/config-default.sh}
   source "${KUBE_CONFIG_FILE}"
 
