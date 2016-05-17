@@ -38,6 +38,7 @@ KUBECTL=${KUBECTL:-cluster/kubectl.sh}
 WAIT_FOR_URL_API_SERVER=${WAIT_FOR_URL_API_SERVER:-10}
 ENABLE_DAEMON=${ENABLE_DAEMON:-false}
 HOSTNAME_OVERRIDE=${HOSTNAME_OVERRIDE:-"127.0.0.1"}
+CLOUD_PROVIDER=${CLOUD_PROVIDER:-""}
 
 if [ "$(id -u)" != "0" ]; then
     echo "WARNING : This script MAY be run as root for docker socket / iptables functionality; if failures occur, retry as root." 2>&1
@@ -77,12 +78,8 @@ done
 
 if [ "x$GO_OUT" == "x" ]; then
     "${KUBE_ROOT}/hack/build-go.sh" \
-        cmd/kube-apiserver \
-        cmd/kube-controller-manager \
-        cmd/kube-proxy \
         cmd/kubectl \
-        cmd/kubelet \
-        plugin/cmd/kube-scheduler
+        cmd/hyperkube
 else
     echo "skipped the build."
 fi
@@ -91,6 +88,14 @@ function test_docker {
     ${DOCKER[@]} ps 2> /dev/null 1> /dev/null
     if [ "$?" != "0" ]; then
       echo "Failed to successfully run 'docker ps', please verify that docker is installed and \$DOCKER_HOST is set correctly."
+      exit 1
+    fi
+}
+
+function test_openssl_installed {
+    openssl version >& /dev/null
+    if [ "$?" != "0" ]; then
+      echo "Failed to run openssl. Please ensure openssl is installed"
       exit 1
     fi
 }
@@ -149,6 +154,12 @@ function detect_binary {
       amd64*)
         host_arch=amd64
         ;;
+      aarch64*)
+        host_arch=arm64
+        ;;
+      arm64*)
+        host_arch=arm64
+        ;;
       arm*)
         host_arch=arm
         ;;
@@ -162,7 +173,7 @@ function detect_binary {
         host_arch=ppc64le
         ;;
       *)
-        echo "Unsupported host arch. Must be x86_64, 386, arm, s390x or ppc64le." >&2
+        echo "Unsupported host arch. Must be x86_64, 386, arm, arm64, s390x or ppc64le." >&2
         exit 1
         ;;
     esac
@@ -257,7 +268,7 @@ function start_apiserver {
     fi
 
     APISERVER_LOG=/tmp/kube-apiserver.log
-    sudo -E "${GO_OUT}/kube-apiserver" ${priv_arg} ${runtime_config}\
+    sudo -E "${GO_OUT}/hyperkube" apiserver ${priv_arg} ${runtime_config}\
       --v=${LOG_LEVEL} \
       --cert-dir="${CERT_DIR}" \
       --service-account-key-file="${SERVICE_ACCOUNT_KEY}" \
@@ -268,6 +279,7 @@ function start_apiserver {
       --advertise-address="${API_HOST}" \
       --etcd-servers="http://127.0.0.1:4001" \
       --service-cluster-ip-range="10.0.0.0/24" \
+      --cloud-provider="${CLOUD_PROVIDER}" \
       --cors-allowed-origins="${API_CORS_ALLOWED_ORIGINS}" >"${APISERVER_LOG}" 2>&1 &
     APISERVER_PID=$!
 
@@ -283,13 +295,14 @@ function start_controller_manager {
     fi
 
     CTLRMGR_LOG=/tmp/kube-controller-manager.log
-    sudo -E "${GO_OUT}/kube-controller-manager" \
+    sudo -E "${GO_OUT}/hyperkube" controller-manager \
       --v=${LOG_LEVEL} \
       --service-account-private-key-file="${SERVICE_ACCOUNT_KEY}" \
       --root-ca-file="${ROOT_CA_FILE}" \
       --enable-hostpath-provisioner="${ENABLE_HOSTPATH_PROVISIONER}" \
       ${node_cidr_args} \
       --pvclaimbinder-sync-period="${CLAIM_BINDER_SYNC_PERIOD}" \
+      --cloud-provider="${CLOUD_PROVIDER}" \
       --master="${API_HOST}:${API_PORT}" >"${CTLRMGR_LOG}" 2>&1 &
     CTLRMGR_PID=$!
 }
@@ -331,13 +344,14 @@ function start_kubelet {
         kubenet_plugin_args="--reconcile-cidr=true "
       fi
 
-      sudo -E "${GO_OUT}/kubelet" ${priv_arg}\
+      sudo -E "${GO_OUT}/hyperkube" kubelet ${priv_arg}\
         --v=${LOG_LEVEL} \
         --chaos-chance="${CHAOS_CHANCE}" \
         --container-runtime="${CONTAINER_RUNTIME}" \
         --rkt-path="${RKT_PATH}" \
         --rkt-stage1-image="${RKT_STAGE1_IMAGE}" \
         --hostname-override="${HOSTNAME_OVERRIDE}" \
+        --cloud-provider="${CLOUD_PROVIDER}" \
         --address="127.0.0.1" \
         --api-servers="${API_HOST}:${API_PORT}" \
         --cpu-cfs-quota=${CPU_CFS_QUOTA} \
@@ -363,20 +377,20 @@ function start_kubelet {
         -i \
         --cidfile=$KUBELET_CIDFILE \
         gcr.io/google_containers/kubelet \
-        /kubelet --v=3 --containerized ${priv_arg}--chaos-chance="${CHAOS_CHANCE}" --hostname-override="${HOSTNAME_OVERRIDE}" --address="127.0.0.1" --api-servers="${API_HOST}:${API_PORT}" --port="$KUBELET_PORT" --resource-container="" &> $KUBELET_LOG &
+        /kubelet --v=3 --containerized ${priv_arg}--chaos-chance="${CHAOS_CHANCE}" --hostname-override="${HOSTNAME_OVERRIDE}" --cloud-provider="${CLOUD_PROVIDER}" --address="127.0.0.1" --api-servers="${API_HOST}:${API_PORT}" --port="$KUBELET_PORT" --resource-container="" &> $KUBELET_LOG &
     fi
 }
 
 function start_kubeproxy {
     PROXY_LOG=/tmp/kube-proxy.log
-    sudo -E "${GO_OUT}/kube-proxy" \
+    sudo -E "${GO_OUT}/hyperkube" proxy \
       --v=${LOG_LEVEL} \
       --hostname-override="${HOSTNAME_OVERRIDE}" \
       --master="http://${API_HOST}:${API_PORT}" >"${PROXY_LOG}" 2>&1 &
     PROXY_PID=$!
 
     SCHEDULER_LOG=/tmp/kube-scheduler.log
-    sudo -E "${GO_OUT}/kube-scheduler" \
+    sudo -E "${GO_OUT}/hyperkube" scheduler \
       --v=${LOG_LEVEL} \
       --master="http://${API_HOST}:${API_PORT}" >"${SCHEDULER_LOG}" 2>&1 &
     SCHEDULER_PID=$!
@@ -429,6 +443,7 @@ EOF
 
 test_docker
 test_apiserver_off
+test_openssl_installed
 
 ### IF the user didn't supply an output/ for the build... Then we detect.
 if [ "$GO_OUT" == "" ]; then

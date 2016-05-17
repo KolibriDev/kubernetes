@@ -22,18 +22,18 @@
 
 download_kube_env() {
   # Fetch kube-env from GCE metadata server.
-  readonly tmp_install_dir="/var/cache/kubernetes-install"
-  mkdir -p "${tmp_install_dir}"
+  readonly tmp_kube_env="/tmp/kube-env.yaml"
   curl --fail --retry 5 --retry-delay 3 --silent --show-error \
     -H "X-Google-Metadata-Request: True" \
-    -o "${tmp_install_dir}/kube_env.yaml" \
+    -o "${tmp_kube_env}" \
     http://metadata.google.internal/computeMetadata/v1/instance/attributes/kube-env
   # Convert the yaml format file into a shell-style file.
   eval $(python -c '''
 import pipes,sys,yaml
 for k,v in yaml.load(sys.stdin).iteritems():
   print("readonly {var}={value}".format(var = k, value = pipes.quote(str(v))))
-''' < "${tmp_install_dir}/kube_env.yaml" > /etc/kube-env)
+''' < "${tmp_kube_env}" > /etc/kube-env)
+  rm -f "${tmp_kube_env}"
 }
 
 validate_hash() {
@@ -152,12 +152,12 @@ install_kube_binary_config() {
   tar xzf "${kube_home}/${manifests_tar}" -C "${dst_dir}" --overwrite
   readonly kube_addon_registry="${KUBE_ADDON_REGISTRY:-gcr.io/google_containers}"
   if [ "${kube_addon_registry}" != "gcr.io/google_containers" ]; then
-    find "${dst_dir}" -name \*.yaml -or -name \*.yaml.in | \
+    find "${dst_dir}" -maxdepth 1 -name \*.yaml -or -maxdepth 1 -name \*.yaml.in | \
       xargs sed -ri "s@(image:\s.*)gcr.io/google_containers@\1${kube_addon_registry}@"
-    find "${dst_dir}" -name \*.manifest -or -name \*.json | \
+    find "${dst_dir}" -maxdepth 1 -name \*.manifest -or -maxdepth 1 -name \*.json | \
       xargs sed -ri "s@(image\":\s+\")gcr.io/google_containers@\1${kube_addon_registry}@"
   fi
-  cp "${dst_dir}/kubernetes/trusty/configure-helper.sh" /etc/kube-configure-helper.sh
+  cp "${dst_dir}/kubernetes/gci-trusty/configure-helper.sh" /etc/kube-configure-helper.sh
 
   # Clean up.
   rm -rf "${kube_home}/kubernetes"

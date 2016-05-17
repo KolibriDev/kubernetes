@@ -95,14 +95,19 @@ source "${KUBE_ROOT}/cluster/aws/${OS_DISTRIBUTION}/util.sh"
 load_distro_utils
 
 # This removes the final character in bash (somehow)
-AWS_REGION=${ZONE%?}
+re='[a-zA-Z]'
+if [[ ${ZONE: -1} =~ $re  ]]; then 
+  AWS_REGION=${ZONE%?}
+else 
+  AWS_REGION=$ZONE
+fi
 
 export AWS_DEFAULT_REGION=${AWS_REGION}
 export AWS_DEFAULT_OUTPUT=text
 AWS_CMD="aws ec2"
 AWS_ASG_CMD="aws autoscaling"
 
-VPC_CIDR_BASE=172.20
+VPC_CIDR_BASE=${KUBE_VPC_CIDR_BASE:-172.20}
 MASTER_IP_SUFFIX=.9
 VPC_CIDR=${VPC_CIDR_BASE}.0.0/16
 SUBNET_CIDR=${VPC_CIDR_BASE}.0.0/24
@@ -158,7 +163,7 @@ function get_igw_id {
 function get_elbs_in_vpc {
   # ELB doesn't seem to be on the same platform as the rest of AWS; doesn't support filtering
   aws elb --output json describe-load-balancers  | \
-    python -c "import json,sys; lst = [str(lb['LoadBalancerName']) for lb in json.load(sys.stdin)['LoadBalancerDescriptions'] if lb['VPCId'] == '$1']; print('\n'.join(lst))"
+    python -c "import json,sys; lst = [str(lb['LoadBalancerName']) for lb in json.load(sys.stdin)['LoadBalancerDescriptions'] if 'VPCId' in lb and lb['VPCId'] == '$1']; print('\n'.join(lst))"
 }
 
 function get_instanceid_from_name {
@@ -358,6 +363,10 @@ function detect-trusty-image () {
     case "${AWS_REGION}" in
       ap-northeast-1)
         AWS_IMAGE=ami-93876e93
+        ;;
+
+      ap-northeast-2)
+        AWS_IMAGE=ami-62ac620c
         ;;
 
       ap-southeast-1)
@@ -1322,7 +1331,7 @@ function check-cluster() {
         local output=`check-minion ${minion_ip}`
         echo $output
         if [[ "${output}" != "working" ]]; then
-          if (( attempt > 9 )); then
+          if (( attempt > 20 )); then
             echo
             echo -e "${color_red}Your cluster is unlikely to work correctly." >&2
             echo "Please run ./cluster/kube-down.sh and re-create the" >&2
